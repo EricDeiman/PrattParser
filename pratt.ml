@@ -4,13 +4,19 @@ let assoc_opt n e =
   try Some (List.assoc n e) with
     Not_found -> None
 
+type value =
+    Literal of string
+  | Unary of string * value
+  | Binary of string * value * value
+  | Tertiary of string * value * value * value
+
 type operator =
   {
     name : string ;
     lbp : int ;
     rbp : int ;
-    led : string -> string ;
-    nud : unit -> string ;
+    led : value -> value ;
+    nud : unit -> value ;
   }
 
 let is_op t env =
@@ -26,7 +32,7 @@ let lbp token env =
 let nud token env =
     match assoc_opt token env with
     | Some {nud = f} -> f
-    | None -> (fun () -> "(literal " ^ token ^ ")")
+    | None -> (fun () -> Literal token)
 
 let led token env =
     match assoc_opt token env with
@@ -90,7 +96,7 @@ let infix op_name power parse tokens =
       name = op_name ;
       lbp = power ;
       rbp = power ;
-      led = (fun left -> "(" ^ op_name ^ " " ^ left ^ " " ^ (parse power (Stream.next tokens)) ^ ")") ;
+      led = (fun left -> Binary (op_name, left, (parse power (Stream.next tokens)))) ;
       nud = (fun () -> raise (Parse_error (op_name ^ "is not a prefix operator"))) ;
     }
 
@@ -99,8 +105,8 @@ let pre_or_infix op_name lpow rpow parse tokens =
       name = op_name ;
       lbp = lpow ;
       rbp = rpow ;
-      led = (fun left -> "(" ^ op_name ^ " " ^ left ^ " " ^ (parse rpow (Stream.next tokens)) ^ ")") ;
-      nud = (fun () -> "(u" ^ op_name ^ " " ^ (parse lpow (Stream.next tokens)) ^ ")") ;
+      led = (fun left -> Binary (op_name, left, (parse rpow (Stream.next tokens)))) ;
+      nud = (fun () -> Unary (op_name, (parse lpow (Stream.next tokens)))) ;
     }
 
 let delim op_name =
@@ -117,7 +123,7 @@ let infixr op_name power parse tokens =
       name = op_name ;
       lbp = power ;
       rbp = power - 1 ;
-      led = (fun left -> "(" ^ op_name ^ " " ^ left ^ " " ^ (parse (power - 1) (Stream.next tokens)) ^ ")") ;
+      led = (fun left -> Binary (op_name, left, (parse (power - 1) (Stream.next tokens)))) ;
       nud = (fun () -> raise (Parse_error (op_name ^ " is not a prefix operator"))) ;
     }
 
@@ -142,7 +148,7 @@ let preinfix op_name power sep parse tokens expect =
           let arg = parse 0 (Stream.next tokens) in
           expect sep ;
           let body = parse 0 (Stream.next tokens) in
-          "(" ^ op_name ^ " " ^ arg ^ " " ^ body ^ ")"
+          Binary (op_name, arg, body)
         )
     }
 
@@ -158,7 +164,7 @@ let tertiary op_name power sep1 sep2 parse tokens expect =
           let second = parse 0 (Stream.next tokens) in
           expect sep2 ;
           let third = parse 0 (Stream.next tokens) in
-          "(" ^ op_name ^ "/" ^ sep1 ^ "/" ^ sep2 ^ " " ^ first ^ " " ^ second ^ third ^ ")"
+          Tertiary ((op_name ^ "/" ^ sep1 ^ "/" ^ sep2), first, second, third)
         )    
   }
 
@@ -200,6 +206,10 @@ let pratt_parse tokens =
       (fun a ({name = n} as x) -> (n, x)::a)
       emptyEnv
       [
+        tertiary "if" 5 "then" "else" parse tokens expect ;
+        delim "then" ;
+        delim "else" ;
+
         infix "=" 10 parse tokens ;
 
         pre_or_infix "+" 30 20 parse tokens ;
@@ -226,17 +236,20 @@ let pratt_parse tokens =
 
 let tests () =
   let cases = [
-    "a + 2";
-    "5 - 3";
-    "-3 * 7";
-    "2 * 3 + 4";
-    "2 * (3 + 4)";
-    "2 ** 3 ** 4";
+    "a + 2" ;
+    "5 - 3" ;
+    "-3 * 7" ;
+    "2 * 3 + 4" ;
+    "2 * (3 + 4)" ;
+    "2 ** 3 ** 4" ;
+    "-3**2" ;
     "fn a -> a + 3" ;
-    "function arg args 3";
-    "(fn a -> a + 3) 7";
+    "function arg args 3" ;
+    "(fn a -> a + 3) 7" ;
     "let x = 2 in x * 3" ;
-    "let id = fn x -> x in id 3 ";
-    "let x = 2 in let y = 3 in y - x";
+    "let id = fn x -> x in id 3 " ;
+    "let x = 2 in let y = 3 in y - x" ;
+    "if 7 then 8 else 9" ;
+    "if 7 then let x = 8 in x else 9 -5" ;
   ] in
   List.map (fun c -> pratt_parse (lexer (source_string_stream c))) cases
