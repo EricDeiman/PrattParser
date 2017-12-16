@@ -222,6 +222,7 @@ let pratt_parse tokens =
         pre_or_infix "-" 30 20 parse tokens ;
 
         infix "*" 30 parse tokens ;
+        infix "/" 30 parse tokens ;
 
         infixr "**" 40 parse tokens ;
 
@@ -233,6 +234,10 @@ let pratt_parse tokens =
       ]
   in
   the_ops := ops ; parse 0 (Stream.next tokens)
+
+type answer =
+    OK
+  | Oops of ((string * value) * value) list
 
 let tests () =
   let cases = [
@@ -316,10 +321,46 @@ let tests () =
     Binary ("let", Binary ("=", Literal "x", Literal "2"),
             Tertiary ("if/then/else", Literal "3",
                       Binary ("fn", Literal "x", Literal "x"),
-                      Binary ("@", Literal "charlie", Literal "horse"))))
+                      Binary ("@", Literal "charlie", Literal "horse")))) ;
+
+    ("let x = 2 in if 3 then let y = 4 in y else 7",
+     Binary ("let", Binary ("=", Literal "x", Literal "2"),
+             Tertiary ("if/then/else", Literal "3",
+                       Binary ("let", Binary ("=", Literal "y", Literal "4"), Literal "y"),
+                       Literal "7"))) ;
+
+    ("if x = y then x else y",
+     Tertiary ("if/then/else", Binary ("=", Literal "x", Literal "y"),
+               Literal "x", Literal "y")) ;
+
+    ("-3-3", Binary ("-", Unary ("-", Literal "3"), Literal "3")) ;
+
+    ("let f x y z = something in or another",
+     Binary ("let",
+             Binary ("=",
+                     Binary ("@",
+                             Binary ("@", Binary ("@", Literal "f", Literal "x"), Literal "y"),
+                             Literal "z"),
+                     Literal "something"),
+             Binary ("@", Literal "or", Literal "another"))) ;
+
+    ("fn x y z -> something or another",
+     Binary ("fn",
+             Binary ("@", Binary ("@", Literal "x", Literal "y"), Literal "z"),
+             Binary ("@", Binary ("@", Literal "something", Literal "or"),
+                     Literal "another"))) ;
+
+    ("6/3/2",
+     Binary ("/", Binary ("/", Literal "6", Literal "3"), Literal "2"))
 
   ] in
-  let test_results = List.map (fun (c, _) ->
-      pratt_parse (lexer (source_string_stream c))) cases
+  let status = List.fold_left (fun ((results, success) as a) ((c, r) as d) ->
+      let res = pratt_parse (lexer (source_string_stream c)) in
+      if r <> res
+      then ((d, res)::results, false)
+      else a
+    ) ([], true) cases
   in
-  test_results, test_results = (List.fold_right (fun (_, r) a -> r::a) cases [])
+  match status with
+  | (_, true) -> OK
+  | (results, _) -> Oops results
