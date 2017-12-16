@@ -206,6 +206,12 @@ let pratt_parse tokens =
       (fun a ({name = n} as x) -> (n, x)::a)
       emptyEnv
       [
+        preinfix "fn" 0 "->" parse tokens expect ;
+        delim "->" ;
+
+        preinfix "let" 0 "in" parse tokens expect ;
+        delim "in" ;
+
         tertiary "if" 5 "then" "else" parse tokens expect ;
         delim "then" ;
         delim "else" ;
@@ -221,12 +227,6 @@ let pratt_parse tokens =
 
         infix "@" 50 parse tokens ;
 
-        preinfix "fn" 55 "->" parse tokens expect ;
-        delim "->" ;
-
-        preinfix "let" 55 "in" parse tokens expect ;
-        delim "in" ;
-
         prefix "(" 60 ")" parse tokens expect ;
         delim ")" ;
 
@@ -236,20 +236,90 @@ let pratt_parse tokens =
 
 let tests () =
   let cases = [
-    "a + 2" ;
-    "5 - 3" ;
-    "-3 * 7" ;
-    "2 * 3 + 4" ;
-    "2 * (3 + 4)" ;
-    "2 ** 3 ** 4" ;
-    "-3**2" ;
-    "fn a -> a + 3" ;
-    "function arg args 3" ;
-    "(fn a -> a + 3) 7" ;
-    "let x = 2 in x * 3" ;
-    "let id = fn x -> x in id 3 " ;
-    "let x = 2 in let y = 3 in y - x" ;
-    "if 7 then 8 else 9" ;
-    "if 7 then let x = 8 in x else 9 -5" ;
+    ("a + 2" ,
+     Binary ("+", Literal "a", Literal "2"));
+
+    ("5 - 3" ,
+    Binary ("-", Literal "5", Literal "3"));
+
+    ("-3 * 7" ,
+        Binary ("*", Unary ("-", Literal "3"), Literal "7"));
+
+    ("2 * 3 + 4" ,
+    Binary ("+", Binary ("*", Literal "2", Literal "3"), Literal "4"));
+
+    ("2 * (3 + 4)" ,
+    Binary ("*", Literal "2", Binary ("+", Literal "3", Literal "4")));
+
+    ("2 ** 3 ** 4" ,
+    Binary ("**", Literal "2", Binary ("**", Literal "3", Literal "4")));
+
+    ("-3**2" ,
+    Unary ("-", Binary ("**", Literal "3", Literal "2")));
+
+    ("fn a -> a + 3" ,
+    Binary ("fn", Literal "a", Binary ("+", Literal "a", Literal "3")));
+
+    ("fn x y -> x ** y" ,
+    Binary ("fn", Binary ("@", Literal "x", Literal "y"),
+            Binary ("**", Literal "x", Literal "y")));
+
+    ("fn g -> fn h -> g + h" ,
+    Binary ("fn", Literal "g",
+            Binary ("fn", Literal "h", Binary ("+", Literal "g", Literal "h")))) ;
+
+    ("function arg args 3" ,
+    Binary ("@",
+            Binary ("@", Binary ("@", Literal "function", Literal "arg"),
+                    Literal "args"),
+            Literal "3"));
+
+    ("(fn a -> a + 3) 7" ,
+    Binary ("@",
+            Binary ("fn", Literal "a", Binary ("+", Literal "a", Literal "3")),
+            Literal "7"));
+
+    ("let x = 2 in x * 3" ,
+    Binary ("let", Binary ("=", Literal "x", Literal "2"),
+            Binary ("*", Literal "x", Literal "3")));
+
+    ("let id = fn x -> x in id 3 " ,
+    Binary ("let",
+            Binary ("=", Literal "id", Binary ("fn", Literal "x", Literal "x")),
+            Binary ("@", Literal "id", Literal "3")));
+
+    ("let x = 2 in let y = 3 in y - x" ,
+    Binary ("let", Binary ("=", Literal "x", Literal "2"),
+            Binary ("let", Binary ("=", Literal "y", Literal "3"),
+                    Binary ("-", Literal "y", Literal "x"))));
+
+    ("if 7 then 8 else 9" ,
+    Tertiary ("if/then/else", Literal "7", Literal "8", Literal "9"));
+
+    ("if 7 then let x = 8 in x else 9 -5" ,
+    Tertiary ("if/then/else", Literal "7",
+              Binary ("let", Binary ("=", Literal "x", Literal "8"), Literal "x"),
+              Binary ("-", Literal "9", Literal "5")));
+
+    ("if 1 then if 2 then 7 else 8 else 3" ,
+    Tertiary ("if/then/else", Literal "1",
+              Tertiary ("if/then/else", Literal "2", Literal "7", Literal "8"),
+              Literal "3"));
+
+    ("let x = 2 in if 3 then x + x else 2 * x" ,
+    Binary ("let", Binary ("=", Literal "x", Literal "2"),
+            Tertiary ("if/then/else", Literal "3",
+                      Binary ("+", Literal "x", Literal "x"),
+                      Binary ("*", Literal "2", Literal "x"))));
+
+    ("let x = 2 in if 3 then fn x -> x else charlie horse" ,
+    Binary ("let", Binary ("=", Literal "x", Literal "2"),
+            Tertiary ("if/then/else", Literal "3",
+                      Binary ("fn", Literal "x", Literal "x"),
+                      Binary ("@", Literal "charlie", Literal "horse"))))
+
   ] in
-  List.map (fun c -> pratt_parse (lexer (source_string_stream c))) cases
+  let test_results = List.map (fun (c, _) ->
+      pratt_parse (lexer (source_string_stream c))) cases
+  in
+  test_results, test_results = (List.fold_right (fun (_, r) a -> r::a) cases [])
