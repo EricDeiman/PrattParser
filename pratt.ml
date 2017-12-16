@@ -127,7 +127,7 @@ let infixr op_name power parse tokens =
       nud = (fun () -> raise (Parse_error (op_name ^ " is not a prefix operator"))) ;
     }
 
-let prefix op_name power close parse tokens expect =
+let prepostfix op_name power close parse tokens expect =
     {
       name = op_name ;
       lbp = power ;
@@ -166,6 +166,15 @@ let tertiary op_name power sep1 sep2 parse tokens expect =
           let third = parse 0 (Stream.next tokens) in
           Tertiary ((op_name ^ "/" ^ sep1 ^ "/" ^ sep2), first, second, third)
         )    
+  }
+
+let prefix op_name power parse tokens =
+  {
+    name = op_name ;
+    lbp = power ;
+    rbp = power ;
+    led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
+    nud = (fun () -> let right = parse power (Stream.next tokens) in Unary ("not", right)) ;
   }
 
 let pratt_parse tokens =
@@ -212,23 +221,33 @@ let pratt_parse tokens =
         preinfix "let" 0 "in" parse tokens expect ;
         delim "in" ;
 
-        tertiary "if" 5 "then" "else" parse tokens expect ;
+        tertiary "if" 10 "then" "else" parse tokens expect ;
         delim "then" ;
         delim "else" ;
 
-        infix "=" 10 parse tokens ;
+        (* Parenthesis are needed for comparison operators *)
+        infix "||" 20 parse tokens ;
+        infix "&&" 20 parse tokens ;
+        infix "<"  20 parse tokens ;
+        infix "<=" 20 parse tokens ;
+        infix ">"  20 parse tokens ;
+        infix "=>" 20 parse tokens ;
+        infix "!=" 20 parse tokens ;
+        infix "="  20 parse tokens ;
+        prefix "not" 20 parse tokens ;
 
-        pre_or_infix "+" 30 20 parse tokens ;
-        pre_or_infix "-" 30 20 parse tokens ;
+        pre_or_infix "+" 40 30 parse tokens ;
+        pre_or_infix "-" 40 30 parse tokens ;
 
-        infix "*" 30 parse tokens ;
-        infix "/" 30 parse tokens ;
+        infix "*" 40 parse tokens ;
+        infix "/" 40 parse tokens ;
+        infix "%" 40 parse tokens ;
 
-        infixr "**" 40 parse tokens ;
+        infixr "**" 50 parse tokens ;
 
-        infix "@" 50 parse tokens ;
+        infix "@" 60 parse tokens ;
 
-        prefix "(" 60 ")" parse tokens expect ;
+        prepostfix "(" 70 ")" parse tokens expect ;
         delim ")" ;
 
       ]
