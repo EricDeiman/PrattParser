@@ -225,7 +225,6 @@ let pratt_parse tokens =
         delim "then" ;
         delim "else" ;
 
-        (* Parenthesis are needed for comparison operators *)
         infix "||" 20 parse tokens ;
         infix "&&" 20 parse tokens ;
         infix "<"  20 parse tokens ;
@@ -370,7 +369,18 @@ let tests () =
                      Literal "another"))) ;
 
     ("6/3/2",
-     Binary ("/", Binary ("/", Literal "6", Literal "3"), Literal "2"))
+     Binary ("/", Binary ("/", Literal "6", Literal "3"), Literal "2")) ;
+
+    ("true = not 7 < 11",
+     Binary ("<", Binary ("=", Literal "true", Unary ("not", Literal "7")),
+             Literal "11")) ;
+
+    ("let x = if 7 = 11 then 7 else 11 in x",
+     Binary ("let",
+             Binary ("=", Literal "x",
+                     Tertiary ("if/then/else", Binary ("=", Literal "7", Literal "11"),
+                               Literal "7", Literal "11")),
+             Literal "x"))
 
   ] in
   let status = List.fold_left (fun ((results, success) as a) ((c, r) as d) ->
