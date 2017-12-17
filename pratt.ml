@@ -15,6 +15,7 @@ type operator =
     name : string ;
     lbp : int ;
     rbp : int ;
+    assoc : bool ;
     led : value -> value ;
     nud : unit -> value ;
   }
@@ -96,6 +97,7 @@ let infix op_name power parse tokens =
       name = op_name ;
       lbp = power ;
       rbp = power ;
+      assoc = true ;
       led = (fun left -> Binary (op_name, left, (parse power (Stream.next tokens)))) ;
       nud = (fun () -> raise (Parse_error (op_name ^ "is not a prefix operator"))) ;
     }
@@ -105,6 +107,7 @@ let pre_or_infix op_name lpow rpow parse tokens =
       name = op_name ;
       lbp = lpow ;
       rbp = rpow ;
+      assoc = true ;
       led = (fun left -> Binary (op_name, left, (parse rpow (Stream.next tokens)))) ;
       nud = (fun () -> Unary (op_name, (parse lpow (Stream.next tokens)))) ;
     }
@@ -114,6 +117,7 @@ let delim op_name =
       name = op_name ;
       lbp = 0 ;
       rbp = 0 ;
+      assoc = true ;
       led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
       nud = (fun () -> raise (Parse_error (op_name ^ " is not a prefix operator"))) ;
     }
@@ -123,15 +127,27 @@ let infixr op_name power parse tokens =
       name = op_name ;
       lbp = power ;
       rbp = power - 1 ;
+      assoc = true ;
       led = (fun left -> Binary (op_name, left, (parse (power - 1) (Stream.next tokens)))) ;
       nud = (fun () -> raise (Parse_error (op_name ^ " is not a prefix operator"))) ;
     }
+
+let infixn op_name power led =
+  {
+    name = op_name ;
+    lbp = power ;
+    rbp = power ;
+    assoc = false ;
+    nud = (fun () -> raise (Parse_error (op_name ^ " is not a prefix operator"))) ;
+    led = led ;
+  }
 
 let prepostfix op_name power close parse tokens expect =
     {
       name = op_name ;
       lbp = power ;
       rbp = 0 ;
+      assoc = true ;
       led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
       nud = (fun () ->
           let right = parse 0 (Stream.next tokens)
@@ -143,6 +159,7 @@ let preinfix op_name power sep parse tokens expect =
       name = op_name ;
       lbp = power ;
       rbp = 0 ;
+      assoc = true ;
       led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
       nud = (fun () ->
           let arg = parse 0 (Stream.next tokens) in
@@ -157,6 +174,7 @@ let tertiary op_name power sep1 sep2 parse tokens expect =
       name = op_name ;
       lbp = power ;
       rbp = 0 ;
+      assoc = true ;
       led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
       nud = (fun () ->
           let first = parse 0 (Stream.next tokens) in
@@ -173,9 +191,12 @@ let prefix op_name power parse tokens =
     name = op_name ;
     lbp = power ;
     rbp = power ;
+    assoc = true ;
     led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
     nud = (fun () -> let right = parse power (Stream.next tokens) in Unary ("not", right)) ;
   }
+
+let deref ops = !(ops ())
 
 let pratt_parse tokens =
   let the_ops = ref emptyEnv in
@@ -211,42 +232,66 @@ let pratt_parse tokens =
           end
     in leds ((nud token !the_ops)())
   in
+  let mk_preinfix name1 power name2 = preinfix name1 power name2 parse tokens expect in
+  let mk_tertiary name1 power name2 name3 = tertiary name1 power name2 name3 parse tokens expect in
+  let mk_infix name power = infix name power parse tokens in
+  let mk_infixr name power = infixr name power parse tokens in
+  let mk_prefix name power = prefix name power parse tokens in
+  let mk_pre_or_infix name powerl powerr = pre_or_infix name powerl powerr parse tokens in
+  let mk_prepostfix name1 power name2 = prepostfix name1 power name2 parse tokens expect in
+
+  let mk_infixn op_name power =
+    infixn op_name power
+      (fun left ->
+         let right = parse power (Stream.next tokens) in
+         let nonassoc_ops = List.filter (fun (_, {assoc = b}) -> b = false) !the_ops in
+         let op_names = List.map (fun (n, _) -> n) nonassoc_ops in
+         match left with
+         | Binary (n', _, _) ->
+           if List.mem n' op_names then
+             raise (Parse_error (op_name ^ " cannot associate with " ^ n'))
+           else Binary (op_name, left, right)
+         | _ -> Binary (op_name, left, right)
+      )
+  in
   let ops = List.fold_left
       (fun a ({name = n} as x) -> (n, x)::a)
       emptyEnv
       [
-        preinfix "fn" 0 "->" parse tokens expect ;
+        mk_preinfix "fn" 0 "->" ;
         delim "->" ;
 
-        preinfix "let" 0 "in" parse tokens expect ;
+        mk_preinfix "let" 0 "in" ;
         delim "in" ;
 
-        tertiary "if" 10 "then" "else" parse tokens expect ;
+        mk_tertiary "if" 10 "then" "else" ;
         delim "then" ;
         delim "else" ;
 
-        infix "||" 20 parse tokens ;
-        infix "&&" 20 parse tokens ;
-        infix "<"  20 parse tokens ;
-        infix "<=" 20 parse tokens ;
-        infix ">"  20 parse tokens ;
-        infix "=>" 20 parse tokens ;
-        infix "!=" 20 parse tokens ;
-        infix "="  20 parse tokens ;
-        prefix "not" 20 parse tokens ;
+        mk_infix "||" 20 ;
+        mk_infix "&&" 20 ;
 
-        pre_or_infix "+" 40 30 parse tokens ;
-        pre_or_infix "-" 40 30 parse tokens ;
+        mk_infixn "<"  20 ;
+        mk_infixn "<=" 20 ;
+        mk_infixn ">"  20 ;
+        mk_infixn "=>" 20 ;
+        mk_infixn "!=" 20 ;
+        mk_infixn "="  20 ;
 
-        infix "*" 40 parse tokens ;
-        infix "/" 40 parse tokens ;
-        infix "%" 40 parse tokens ;
+        mk_prefix "not" 20 ;
 
-        infixr "**" 50 parse tokens ;
+        mk_pre_or_infix "+" 40 30 ;
+        mk_pre_or_infix "-" 40 30 ;
 
-        infix "@" 60 parse tokens ;
+        mk_infix "*" 40 ;
+        mk_infix "/" 40 ;
+        mk_infix "%" 40 ;
 
-        prepostfix "(" 70 ")" parse tokens expect ;
+        mk_infixr "**" 50 ;
+
+        mk_infix "@" 60 ;
+
+        mk_prepostfix "(" 70 ")" ;
         delim ")" ;
 
       ]
@@ -370,10 +415,6 @@ let tests () =
 
     ("6/3/2",
      Binary ("/", Binary ("/", Literal "6", Literal "3"), Literal "2")) ;
-
-    ("true = not 7 < 11",
-     Binary ("<", Binary ("=", Literal "true", Unary ("not", Literal "7")),
-             Literal "11")) ;
 
     ("let x = if 7 = 11 then 7 else 11 in x",
      Binary ("let",
