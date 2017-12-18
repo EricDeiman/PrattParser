@@ -15,6 +15,7 @@ type operator =
     name : string ;
     lbp : int ;
     rbp : int ;
+    nbp : int ;
     assoc : bool ;
     led : value -> value ;
     nud : unit -> value ;
@@ -29,6 +30,11 @@ let lbp token env =
   match assoc_opt token env with
   | None -> 0
   | Some {lbp = i} -> i
+
+let nbp token env =
+  match assoc_opt token env with
+  | None -> 0
+  | Some {nbp = i} -> i
 
 let nud token env =
     match assoc_opt token env with
@@ -97,6 +103,7 @@ let infix op_name power parse tokens =
       name = op_name ;
       lbp = power ;
       rbp = power ;
+      nbp = power ;
       assoc = true ;
       led = (fun left -> Binary (op_name, left, (parse power (Stream.next tokens)))) ;
       nud = (fun () -> raise (Parse_error (op_name ^ "is not a prefix operator"))) ;
@@ -107,6 +114,7 @@ let pre_or_infix op_name lpow rpow parse tokens =
       name = op_name ;
       lbp = lpow ;
       rbp = rpow ;
+      nbp = lpow ;
       assoc = true ;
       led = (fun left -> Binary (op_name, left, (parse rpow (Stream.next tokens)))) ;
       nud = (fun () -> Unary (op_name, (parse lpow (Stream.next tokens)))) ;
@@ -117,6 +125,7 @@ let delim op_name =
       name = op_name ;
       lbp = 0 ;
       rbp = 0 ;
+      nbp = 0 ;
       assoc = true ;
       led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
       nud = (fun () -> raise (Parse_error (op_name ^ " is not a prefix operator"))) ;
@@ -127,19 +136,21 @@ let infixr op_name power parse tokens =
       name = op_name ;
       lbp = power ;
       rbp = power - 1 ;
+      nbp = power ;
       assoc = true ;
       led = (fun left -> Binary (op_name, left, (parse (power - 1) (Stream.next tokens)))) ;
       nud = (fun () -> raise (Parse_error (op_name ^ " is not a prefix operator"))) ;
     }
 
-let infixn op_name power led =
+let infixn op_name power parse tokens =
   {
     name = op_name ;
     lbp = power ;
-    rbp = power ;
+    rbp = power + 1 ;
+    nbp = power - 1 ;
     assoc = false ;
     nud = (fun () -> raise (Parse_error (op_name ^ " is not a prefix operator"))) ;
-    led = led ;
+    led = (fun left -> Binary (op_name, left, (parse (power + 1) (Stream.next tokens)))) ;
   }
 
 let prepostfix op_name power close parse tokens expect =
@@ -147,6 +158,7 @@ let prepostfix op_name power close parse tokens expect =
       name = op_name ;
       lbp = power ;
       rbp = 0 ;
+      nbp = power ;
       assoc = true ;
       led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
       nud = (fun () ->
@@ -159,6 +171,7 @@ let preinfix op_name power sep parse tokens expect =
       name = op_name ;
       lbp = power ;
       rbp = 0 ;
+      nbp = power ;
       assoc = true ;
       led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
       nud = (fun () ->
@@ -174,6 +187,7 @@ let tertiary op_name power sep1 sep2 parse tokens expect =
       name = op_name ;
       lbp = power ;
       rbp = 0 ;
+      nbp = power ;
       assoc = true ;
       led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
       nud = (fun () ->
@@ -191,12 +205,11 @@ let prefix op_name power parse tokens =
     name = op_name ;
     lbp = power ;
     rbp = power ;
+    nbp = power ;
     assoc = true ;
     led = (fun left -> raise (Parse_error (op_name ^ " is not an infix operator"))) ;
     nud = (fun () -> let right = parse power (Stream.next tokens) in Unary ("not", right)) ;
   }
-
-let deref ops = !(ops ())
 
 let pratt_parse tokens =
   let the_ops = ref emptyEnv in
@@ -209,28 +222,28 @@ let pratt_parse tokens =
       else raise (Parse_error ("expected " ^ n ^ " but found " ^ t))
   in
   let rec parse rbp token =
-    let rec leds left =
+    let rec leds left r =
       match Stream.peek tokens with
       | None -> left
       | Some t ->
         if is_op t !the_ops
         then
           begin
-            if rbp < (lbp t !the_ops)
+            if rbp < (lbp t !the_ops) && (lbp t !the_ops) < r
             then
-              leds ((led (Stream.next tokens) !the_ops) left)
+              leds ((led (Stream.next tokens) !the_ops) left) (nbp t !the_ops)
             else
               left
           end
         else
           begin
-            if rbp < (lbp "@" !the_ops)
+            if rbp < (lbp "@" !the_ops) && (lbp "@" !the_ops) < r
             then
-              leds ((led "@" !the_ops) left)
+              leds ((led "@" !the_ops) left) (nbp t !the_ops)
             else
               left
           end
-    in leds ((nud token !the_ops)())
+    in leds ((nud token !the_ops)()) max_int
   in
   let mk_preinfix name1 power name2 = preinfix name1 power name2 parse tokens expect in
   let mk_tertiary name1 power name2 name3 = tertiary name1 power name2 name3 parse tokens expect in
@@ -240,30 +253,33 @@ let pratt_parse tokens =
   let mk_pre_or_infix name powerl powerr = pre_or_infix name powerl powerr parse tokens in
   let mk_prepostfix name1 power name2 = prepostfix name1 power name2 parse tokens expect in
 
-  let mk_infixn op_name power =
-    infixn op_name power
-      (fun left ->
-         let right = parse power (Stream.next tokens) in
-         let nonassoc_ops = List.filter (fun (_, {assoc = b}) -> b = false) !the_ops in
-         let op_names = List.map (fun (n, _) -> n) nonassoc_ops in
-         match left, right with
-         | Binary (n', _, _), Binary (n'', _, _) ->
-           if List.mem n' op_names then
-             raise (Parse_error (op_name ^ " cannot associate with " ^ n'))
-           else if List.mem n'' op_names then
-             raise (Parse_error (op_name ^ " cannot associate with " ^ n''))
-           else Binary (op_name, left, right)
-         | Binary (n', _, _), _ ->
-           if List.mem n' op_names then
-             raise (Parse_error (op_name ^ " cannot associate with " ^ n'))
-           else Binary (op_name, left, right)
-         | _, Binary (n'', _, _) ->
-           if List.mem n'' op_names then
-             raise (Parse_error (op_name ^ " cannot associate with " ^ n''))
-           else Binary (op_name, left, right)
-         | _ -> Binary (op_name, left, right)
-      )
-  in
+  (* let mk_infixn op_name power =
+   *   infixn op_name power
+   *     (fun left ->
+   *        let right = parse power (Stream.next tokens) in
+   *        let nonassoc_ops = List.filter (fun (_, {assoc = b}) -> b = false) !the_ops in
+   *        let op_names = List.map (fun (n, _) -> n) nonassoc_ops in
+   *        match left, right with
+   *        | Binary (n', _, _), Binary (n'', _, _) ->
+   *          if List.mem n' op_names then
+   *            raise (Parse_error (op_name ^ " cannot associate with " ^ n'))
+   *          else if List.mem n'' op_names then
+   *            raise (Parse_error (op_name ^ " cannot associate with " ^ n''))
+   *          else Binary (op_name, left, right)
+   *        | Binary (n', _, _), _ ->
+   *          if List.mem n' op_names then
+   *            raise (Parse_error (op_name ^ " cannot associate with " ^ n'))
+   *          else Binary (op_name, left, right)
+   *        | _, Binary (n'', _, _) ->
+   *          if List.mem n'' op_names then
+   *            raise (Parse_error (op_name ^ " cannot associate with " ^ n''))
+   *          else Binary (op_name, left, right)
+   *        | _ -> Binary (op_name, left, right)
+   *     )
+     in*)
+
+  let mk_infixn name power = infixn name power parse tokens in
+
   let ops = List.fold_left
       (fun a ({name = n} as x) -> (n, x)::a)
       emptyEnv
@@ -303,10 +319,13 @@ let pratt_parse tokens =
 
         mk_prepostfix "(" 70 ")" ;
         delim ")" ;
-
       ]
   in
-  the_ops := ops ; parse 0 (Stream.next tokens)
+  the_ops := ops ;
+  let ans = parse 0 (Stream.next tokens) in
+  match Stream.peek tokens with
+  | None -> ans
+  | Some c -> raise (Parse_error ("Not finished with input near " ^ c))
 
 type answer =
     OK
