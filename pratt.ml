@@ -246,10 +246,20 @@ let pratt_parse tokens =
          let right = parse power (Stream.next tokens) in
          let nonassoc_ops = List.filter (fun (_, {assoc = b}) -> b = false) !the_ops in
          let op_names = List.map (fun (n, _) -> n) nonassoc_ops in
-         match left with
-         | Binary (n', _, _) ->
+         match left, right with
+         | Binary (n', _, _), Binary (n'', _, _) ->
            if List.mem n' op_names then
              raise (Parse_error (op_name ^ " cannot associate with " ^ n'))
+           else if List.mem n'' op_names then
+             raise (Parse_error (op_name ^ " cannot associate with " ^ n''))
+           else Binary (op_name, left, right)
+         | Binary (n', _, _), _ ->
+           if List.mem n' op_names then
+             raise (Parse_error (op_name ^ " cannot associate with " ^ n'))
+           else Binary (op_name, left, right)
+         | _, Binary (n'', _, _) ->
+           if List.mem n'' op_names then
+             raise (Parse_error (op_name ^ " cannot associate with " ^ n''))
            else Binary (op_name, left, right)
          | _ -> Binary (op_name, left, right)
       )
