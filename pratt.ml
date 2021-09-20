@@ -1,5 +1,5 @@
 (*
-    Copyright 2018 Eric J. Deiman
+    Copyright 2016 Eric J. Deiman
 
     This file is part of the Pratt Parser project.
 
